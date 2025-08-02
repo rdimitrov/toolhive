@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/toolhive/pkg/config"
+	"github.com/stacklok/toolhive/pkg/logger"
 )
 
 func TestNewRegistryManager(t *testing.T) {
@@ -460,5 +461,274 @@ func TestConcurrentAccess(t *testing.T) {
 	// Wait for all goroutines to complete
 	for i := 0; i < 10; i++ {
 		<-done
+	}
+}
+
+func TestSaveToConfig(t *testing.T) {
+	t.Parallel()
+	
+	// Initialize logger for config operations
+	logger.Initialize()
+	
+	// Create temporary config file
+	tempDir := t.TempDir()
+	configPath := tempDir + "/test_config.yaml"
+	
+	// Create manager with test registries
+	manager := NewRegistryManager()
+	
+	// Add embedded registry
+	embeddedConfig := RegistryConfig{
+		ID:       "embedded-test",
+		Name:     "Embedded Test Registry",
+		Type:     RegistryTypeEmbedded,
+		Priority: 1,
+		Enabled:  true,
+	}
+	err := manager.AddRegistry(embeddedConfig)
+	if err != nil {
+		t.Fatalf("Failed to add embedded registry: %v", err)
+	}
+	
+	// Add remote registry
+	remoteConfig := RegistryConfig{
+		ID:             "remote-test",
+		Name:           "Remote Test Registry",
+		Type:           RegistryTypeRemote,
+		URL:            "https://example.com/registry.json",
+		Priority:       2,
+		AllowPrivateIp: false,
+		Enabled:        true,
+	}
+	err = manager.AddRegistry(remoteConfig)
+	if err != nil {
+		t.Fatalf("Failed to add remote registry: %v", err)
+	}
+	
+	// Test SaveToConfigPath
+	err = manager.SaveToConfigPath(configPath)
+	if err != nil {
+		t.Fatalf("SaveToConfigPath failed: %v", err)
+	}
+	
+	// Load config and verify registries were saved
+	cfg, err := config.LoadOrCreateConfigWithPath(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load saved config: %v", err)
+	}
+	
+	if len(cfg.Registries) != 2 {
+		t.Errorf("Expected 2 registries in config, got %d", len(cfg.Registries))
+	}
+	
+	// Verify embedded registry was saved
+	var embeddedFound, remoteFound bool
+	for _, reg := range cfg.Registries {
+		if reg.ID == "embedded-test" {
+			embeddedFound = true
+			if reg.Name != "Embedded Test Registry" {
+				t.Errorf("Expected embedded registry name 'Embedded Test Registry', got '%s'", reg.Name)
+			}
+			if reg.Type != "embedded" {
+				t.Errorf("Expected embedded registry type 'embedded', got '%s'", reg.Type)
+			}
+		}
+		if reg.ID == "remote-test" {
+			remoteFound = true
+			if reg.URL != "https://example.com/registry.json" {
+				t.Errorf("Expected remote registry URL 'https://example.com/registry.json', got '%s'", reg.URL)
+			}
+			if reg.AllowPrivateIp != false {
+				t.Errorf("Expected remote registry AllowPrivateIp false, got %v", reg.AllowPrivateIp)
+			}
+		}
+	}
+	
+	if !embeddedFound {
+		t.Error("Embedded registry not found in saved config")
+	}
+	if !remoteFound {
+		t.Error("Remote registry not found in saved config")
+	}
+}
+
+func TestSaveToConfigWithDefaultRegistry(t *testing.T) {
+	t.Parallel()
+	
+	// Initialize logger for config operations
+	logger.Initialize()
+	
+	// Create temporary config file
+	tempDir := t.TempDir()
+	configPath := tempDir + "/test_config_with_default.yaml"
+	
+	// Create manager with test registries
+	manager := NewRegistryManager()
+	
+	// Add registries
+	config1 := RegistryConfig{
+		ID:       "registry1",
+		Name:     "Registry 1",
+		Type:     RegistryTypeEmbedded,
+		Priority: 2,
+		Enabled:  true,
+	}
+	config2 := RegistryConfig{
+		ID:       "registry2", 
+		Name:     "Registry 2",
+		Type:     RegistryTypeEmbedded,
+		Priority: 1,
+		Enabled:  true,
+	}
+	
+	err := manager.AddRegistry(config1)
+	if err != nil {
+		t.Fatalf("Failed to add registry1: %v", err)
+	}
+	err = manager.AddRegistry(config2)
+	if err != nil {
+		t.Fatalf("Failed to add registry2: %v", err)
+	}
+	
+	// Set specific default registry
+	err = manager.SetDefaultRegistry("registry1")
+	if err != nil {
+		t.Fatalf("Failed to set default registry: %v", err)
+	}
+	
+	// Save to config
+	err = manager.SaveToConfigPath(configPath)
+	if err != nil {
+		t.Fatalf("SaveToConfigPath failed: %v", err)
+	}
+	
+	// Load and verify default registry was saved
+	cfg, err := config.LoadOrCreateConfigWithPath(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load saved config: %v", err)
+	}
+	
+	if cfg.DefaultRegistryID != "registry1" {
+		t.Errorf("Expected default registry ID 'registry1', got '%s'", cfg.DefaultRegistryID)
+	}
+}
+
+func TestGetRegistry(t *testing.T) {
+	t.Parallel()
+	
+	manager := NewRegistryManager()
+	
+	// Test getting non-existent registry
+	_, err := manager.GetRegistry("non-existent")
+	if err == nil {
+		t.Error("Expected error when getting non-existent registry")
+	}
+	
+	// Add a test registry
+	testConfig := RegistryConfig{
+		ID:       "test-registry",
+		Name:     "Test Registry",
+		Type:     RegistryTypeEmbedded,
+		Priority: 1,
+		Enabled:  true,
+	}
+	err = manager.AddRegistry(testConfig)
+	if err != nil {
+		t.Fatalf("Failed to add test registry: %v", err)
+	}
+	
+	// Test getting existing registry
+	provider, err := manager.GetRegistry("test-registry")
+	if err != nil {
+		t.Fatalf("Failed to get existing registry: %v", err)
+	}
+	if provider == nil {
+		t.Error("Expected non-nil provider for existing registry")
+	}
+	
+	// Test that we can use the provider
+	_, err = provider.ListServers()
+	if err != nil {
+		t.Errorf("Failed to list servers from retrieved provider: %v", err)
+	}
+}
+
+func TestRegistryManagerErrorHandling(t *testing.T) {
+	t.Parallel()
+	
+	manager := NewRegistryManager()
+	
+	// Test adding registry with empty ID
+	invalidConfig := RegistryConfig{
+		ID:   "",
+		Name: "Invalid Registry",
+		Type: RegistryTypeEmbedded,
+	}
+	err := manager.AddRegistry(invalidConfig)
+	if err == nil {
+		t.Error("Expected error when adding registry with empty ID")
+	}
+	
+	// Test adding registry with empty name
+	invalidConfig.ID = "valid-id"
+	invalidConfig.Name = ""
+	err = manager.AddRegistry(invalidConfig)
+	if err == nil {
+		t.Error("Expected error when adding registry with empty name")
+	}
+	
+	// Test adding registry with empty type
+	invalidConfig.Name = "Valid Name"
+	invalidConfig.Type = ""
+	err = manager.AddRegistry(invalidConfig)
+	if err == nil {
+		t.Error("Expected error when adding registry with empty type")
+	}
+	
+	// Test adding remote registry without URL
+	invalidConfig.Type = RegistryTypeRemote
+	invalidConfig.URL = ""
+	err = manager.AddRegistry(invalidConfig)
+	if err == nil {
+		t.Error("Expected error when adding remote registry without URL")
+	}
+	
+	// Test adding local registry without path
+	invalidConfig.Type = RegistryTypeLocal
+	invalidConfig.Path = ""
+	err = manager.AddRegistry(invalidConfig)
+	if err == nil {
+		t.Error("Expected error when adding local registry without path")
+	}
+	
+	// Test operations on non-existent registry
+	err = manager.RemoveRegistry("non-existent")
+	if err == nil {
+		t.Error("Expected error when removing non-existent registry")
+	}
+	
+	err = manager.EnableRegistry("non-existent")
+	if err == nil {
+		t.Error("Expected error when enabling non-existent registry")
+	}
+	
+	err = manager.DisableRegistry("non-existent")
+	if err == nil {
+		t.Error("Expected error when disabling non-existent registry")
+	}
+	
+	err = manager.SetDefaultRegistry("non-existent")
+	if err == nil {
+		t.Error("Expected error when setting non-existent default registry")
+	}
+	
+	updateConfig := RegistryConfig{
+		ID:   "non-existent",
+		Name: "Updated Registry",
+		Type: RegistryTypeEmbedded,
+	}
+	err = manager.UpdateRegistry("non-existent", updateConfig)
+	if err == nil {
+		t.Error("Expected error when updating non-existent registry")
 	}
 }

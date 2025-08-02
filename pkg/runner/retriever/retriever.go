@@ -58,11 +58,11 @@ func GetMCPServer(
 	} else {
 		logger.Debugf("No protocol scheme detected, using image: %s", serverOrImage)
 		// Try to find the imageMetadata in the registry
-		provider, err := registry.GetDefaultProvider()
+		manager, err := registry.GetDefaultManager()
 		if err != nil {
-			return "", nil, fmt.Errorf("failed to get registry provider: %v", err)
+			return "", nil, fmt.Errorf("failed to get registry manager: %v", err)
 		}
-		imageMetadata, err = provider.GetServer(serverOrImage)
+		imageMetadata, err = manager.GetServer(serverOrImage)
 		if err != nil {
 			logger.Debugf("ImageMetadata '%s' not found in registry: %v", serverOrImage, err)
 			imageToUse = serverOrImage

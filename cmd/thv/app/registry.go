@@ -54,11 +54,11 @@ func init() {
 
 func registryListCmdFunc(_ *cobra.Command, _ []string) error {
 	// Get all servers from registry
-	provider, err := registry.GetDefaultProvider()
+	manager, err := registry.GetDefaultManager()
 	if err != nil {
-		return fmt.Errorf("failed to get registry provider: %v", err)
+		return fmt.Errorf("failed to get registry manager: %v", err)
 	}
-	servers, err := provider.ListServers()
+	servers, err := manager.ListServers()
 	if err != nil {
 		return fmt.Errorf("failed to list servers: %v", err)
 	}
@@ -81,11 +81,11 @@ func registryListCmdFunc(_ *cobra.Command, _ []string) error {
 func registryInfoCmdFunc(_ *cobra.Command, args []string) error {
 	// Get server information
 	serverName := args[0]
-	provider, err := registry.GetDefaultProvider()
+	manager, err := registry.GetDefaultManager()
 	if err != nil {
-		return fmt.Errorf("failed to get registry provider: %v", err)
+		return fmt.Errorf("failed to get registry manager: %v", err)
 	}
-	server, err := provider.GetServer(serverName)
+	server, err := manager.GetServer(serverName)
 	if err != nil {
 		return fmt.Errorf("failed to get server information: %v", err)
 	}
