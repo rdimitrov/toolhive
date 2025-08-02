@@ -257,17 +257,16 @@ func (rm *registryManager) AddRegistry(config RegistryConfig) error {
 	switch strings.ToLower(config.Type) {
 	case RegistryTypeLocal:
 		if config.Path == "" {
-			provider = NewLocalRegistryProvider()
-		} else {
-			provider = NewLocalRegistryProvider(config.Path)
+			return fmt.Errorf("local registry requires file path")
 		}
+		provider = NewLocalRegistryProvider(config.Path)
 	case RegistryTypeRemote:
 		if config.URL == "" {
 			return fmt.Errorf("remote registry requires URL")
 		}
 		provider = NewRemoteRegistryProvider(config.URL, config.AllowPrivateIp)
 	case RegistryTypeEmbedded:
-		provider = NewLocalRegistryProvider()
+		provider = NewEmbeddedRegistryProvider()
 	default:
 		return fmt.Errorf("unsupported registry type: %s", config.Type)
 	}
@@ -330,17 +329,16 @@ func (rm *registryManager) UpdateRegistry(id string, config RegistryConfig) erro
 		switch strings.ToLower(config.Type) {
 		case RegistryTypeLocal:
 			if config.Path == "" {
-				provider = NewLocalRegistryProvider()
-			} else {
-				provider = NewLocalRegistryProvider(config.Path)
+				return fmt.Errorf("local registry requires file path")
 			}
+			provider = NewLocalRegistryProvider(config.Path)
 		case RegistryTypeRemote:
 			if config.URL == "" {
 				return fmt.Errorf("remote registry requires URL")
 			}
 			provider = NewRemoteRegistryProvider(config.URL, config.AllowPrivateIp)
 		case RegistryTypeEmbedded:
-			provider = NewLocalRegistryProvider()
+			provider = NewEmbeddedRegistryProvider()
 		default:
 			return fmt.Errorf("unsupported registry type: %s", config.Type)
 		}

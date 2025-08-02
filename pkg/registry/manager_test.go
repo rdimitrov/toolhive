@@ -1,10 +1,7 @@
 package registry
 
 import (
-	"fmt"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stacklok/toolhive/pkg/config"
 )
@@ -361,7 +358,7 @@ func TestRegistryValidation(t *testing.T) {
 	// Test adding registry with empty name
 	regConfig.ID = "test1"
 	regConfig.Name = ""
-	err = manager.AddRegistry(config)
+	err = manager.AddRegistry(regConfig)
 	if err == nil {
 		t.Error("Expected error for empty registry name")
 	}
@@ -370,14 +367,14 @@ func TestRegistryValidation(t *testing.T) {
 	regConfig.Name = "Test Registry"
 	regConfig.Type = "remote"
 	regConfig.URL = ""
-	err = manager.AddRegistry(config)
+	err = manager.AddRegistry(regConfig)
 	if err == nil {
 		t.Error("Expected error for remote registry without URL")
 	}
 
 	// Test adding registry with unsupported type
 	regConfig.Type = "unsupported"
-	err = manager.AddRegistry(config)
+	err = manager.AddRegistry(regConfig)
 	if err == nil {
 		t.Error("Expected error for unsupported registry type")
 	}
@@ -387,7 +384,7 @@ func TestUpdateRegistry(t *testing.T) {
 	manager := NewRegistryManager()
 
 	// Add initial registry
-	config := RegistryConfig{
+	regConfig := RegistryConfig{
 		ID:       "test1",
 		Name:     "Test Registry 1",
 		Type:     "embedded",
@@ -438,7 +435,7 @@ func TestConcurrentAccess(t *testing.T) {
 	manager := NewRegistryManager()
 
 	// Add a registry
-	config := RegistryConfig{
+	regConfig := RegistryConfig{
 		ID:       "test1",
 		Name:     "Test Registry 1",
 		Type:     "embedded",

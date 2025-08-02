@@ -20,7 +20,7 @@ func NewRegistryProvider(cfg *config.Config) Provider {
 	if cfg != nil && len(cfg.LocalRegistryPath) > 0 {
 		return NewLocalRegistryProvider(cfg.LocalRegistryPath)
 	}
-	return NewLocalRegistryProvider()
+	return NewEmbeddedRegistryProvider()
 }
 
 // GetDefaultProvider returns the default registry provider instance
