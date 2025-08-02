@@ -6,11 +6,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stacklok/toolhive/pkg/config"
 )
 
 const (
-	RegistryTypeLocal    = "local"
-	RegistryTypeRemote   = "remote"
+	// RegistryTypeLocal represents a local file-based registry
+	RegistryTypeLocal = "local"
+	// RegistryTypeRemote represents a remote HTTP-based registry
+	RegistryTypeRemote = "remote"
+	// RegistryTypeEmbedded represents the built-in embedded registry
 	RegistryTypeEmbedded = "embedded"
 )
 
@@ -29,15 +34,19 @@ type RegistryManager interface {
 	ListRegistryInfo() []RegistryInfo
 
 	// Registry management
-	AddRegistry(config RegistryConfig) error
+	AddRegistry(cfg RegistryConfig) error
 	RemoveRegistry(id string) error
-	UpdateRegistry(id string, config RegistryConfig) error
+	UpdateRegistry(id string, cfg RegistryConfig) error
 	EnableRegistry(id string) error
 	DisableRegistry(id string) error
 
 	// Default registry management
 	SetDefaultRegistry(id string) error
 	GetDefaultRegistry() Provider
+
+	// Configuration persistence
+	SaveToConfig() error
+	SaveToConfigPath(configPath string) error
 }
 
 // registryManager implements the RegistryManager interface
@@ -65,7 +74,7 @@ func (rm *registryManager) GetServer(name string) (*ImageMetadata, error) {
 	// Try default registry first
 	if rm.defaultID != "" {
 		if provider, exists := rm.providers[rm.defaultID]; exists {
-			if config := rm.configs[rm.defaultID]; config.Enabled {
+			if cfg := rm.configs[rm.defaultID]; cfg.Enabled {
 				if server, err := provider.GetServer(name); err == nil {
 					return server, nil
 				}
@@ -79,7 +88,7 @@ func (rm *registryManager) GetServer(name string) (*ImageMetadata, error) {
 		if id == rm.defaultID {
 			continue // already tried
 		}
-		if config := rm.configs[id]; config.Enabled {
+		if cfg := rm.configs[id]; cfg.Enabled {
 			if provider, exists := rm.providers[id]; exists {
 				if server, err := provider.GetServer(name); err == nil {
 					return server, nil
@@ -101,7 +110,7 @@ func (rm *registryManager) SearchServers(query string) ([]*ImageMetadata, error)
 
 	priorities := rm.getSortedRegistriesByPriority()
 	for _, id := range priorities {
-		if config := rm.configs[id]; config.Enabled {
+		if cfg := rm.configs[id]; cfg.Enabled {
 			if provider, exists := rm.providers[id]; exists {
 				if results, err := provider.SearchServers(query); err == nil {
 					for _, server := range results {
@@ -129,7 +138,7 @@ func (rm *registryManager) ListServers() ([]*ImageMetadata, error) {
 
 	priorities := rm.getSortedRegistriesByPriority()
 	for _, id := range priorities {
-		if config := rm.configs[id]; config.Enabled {
+		if cfg := rm.configs[id]; cfg.Enabled {
 			if provider, exists := rm.providers[id]; exists {
 				if servers, err := provider.ListServers(); err == nil {
 					for _, server := range servers {
@@ -237,46 +246,46 @@ func (rm *registryManager) ListRegistryInfo() []RegistryInfo {
 }
 
 // AddRegistry adds a new registry
-func (rm *registryManager) AddRegistry(config RegistryConfig) error {
+func (rm *registryManager) AddRegistry(cfg RegistryConfig) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
 	// Validate config
-	if config.ID == "" {
+	if cfg.ID == "" {
 		return fmt.Errorf("registry ID cannot be empty")
 	}
-	if config.Name == "" {
+	if cfg.Name == "" {
 		return fmt.Errorf("registry name cannot be empty")
 	}
-	if _, exists := rm.configs[config.ID]; exists {
-		return fmt.Errorf("registry with ID %s already exists", config.ID)
+	if _, exists := rm.configs[cfg.ID]; exists {
+		return fmt.Errorf("registry with ID %s already exists", cfg.ID)
 	}
 
 	// Create provider based on type
 	var provider Provider
-	switch strings.ToLower(config.Type) {
+	switch strings.ToLower(cfg.Type) {
 	case RegistryTypeLocal:
-		if config.Path == "" {
+		if cfg.Path == "" {
 			return fmt.Errorf("local registry requires file path")
 		}
-		provider = NewLocalRegistryProvider(config.Path)
+		provider = NewLocalRegistryProvider(cfg.Path)
 	case RegistryTypeRemote:
-		if config.URL == "" {
+		if cfg.URL == "" {
 			return fmt.Errorf("remote registry requires URL")
 		}
-		provider = NewRemoteRegistryProvider(config.URL, config.AllowPrivateIp)
+		provider = NewRemoteRegistryProvider(cfg.URL, cfg.AllowPrivateIp)
 	case RegistryTypeEmbedded:
 		provider = NewEmbeddedRegistryProvider()
 	default:
-		return fmt.Errorf("unsupported registry type: %s", config.Type)
+		return fmt.Errorf("unsupported registry type: %s", cfg.Type)
 	}
 
-	rm.configs[config.ID] = config
-	rm.providers[config.ID] = provider
+	rm.configs[cfg.ID] = cfg
+	rm.providers[cfg.ID] = provider
 
 	// Set as default if it's the first registry
 	if rm.defaultID == "" {
-		rm.defaultID = config.ID
+		rm.defaultID = cfg.ID
 	}
 
 	return nil
@@ -311,7 +320,7 @@ func (rm *registryManager) RemoveRegistry(id string) error {
 }
 
 // UpdateRegistry updates an existing registry configuration
-func (rm *registryManager) UpdateRegistry(id string, config RegistryConfig) error {
+func (rm *registryManager) UpdateRegistry(id string, cfg RegistryConfig) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -320,32 +329,32 @@ func (rm *registryManager) UpdateRegistry(id string, config RegistryConfig) erro
 	}
 
 	// Ensure ID matches
-	config.ID = id
+	cfg.ID = id
 
 	// Update provider if URL/Path changed
 	oldConfig := rm.configs[id]
-	if oldConfig.URL != config.URL || oldConfig.Path != config.Path || oldConfig.Type != config.Type {
+	if oldConfig.URL != cfg.URL || oldConfig.Path != cfg.Path || oldConfig.Type != cfg.Type {
 		var provider Provider
-		switch strings.ToLower(config.Type) {
+		switch strings.ToLower(cfg.Type) {
 		case RegistryTypeLocal:
-			if config.Path == "" {
+			if cfg.Path == "" {
 				return fmt.Errorf("local registry requires file path")
 			}
-			provider = NewLocalRegistryProvider(config.Path)
+			provider = NewLocalRegistryProvider(cfg.Path)
 		case RegistryTypeRemote:
-			if config.URL == "" {
+			if cfg.URL == "" {
 				return fmt.Errorf("remote registry requires URL")
 			}
-			provider = NewRemoteRegistryProvider(config.URL, config.AllowPrivateIp)
+			provider = NewRemoteRegistryProvider(cfg.URL, cfg.AllowPrivateIp)
 		case RegistryTypeEmbedded:
 			provider = NewEmbeddedRegistryProvider()
 		default:
-			return fmt.Errorf("unsupported registry type: %s", config.Type)
+			return fmt.Errorf("unsupported registry type: %s", cfg.Type)
 		}
 		rm.providers[id] = provider
 	}
 
-	rm.configs[id] = config
+	rm.configs[id] = cfg
 	return nil
 }
 
@@ -417,7 +426,7 @@ func (rm *registryManager) GetDefaultRegistry() Provider {
 
 	if rm.defaultID != "" {
 		if provider, exists := rm.providers[rm.defaultID]; exists {
-			if config := rm.configs[rm.defaultID]; config.Enabled {
+			if cfg := rm.configs[rm.defaultID]; cfg.Enabled {
 				return provider
 			}
 		}
@@ -426,7 +435,7 @@ func (rm *registryManager) GetDefaultRegistry() Provider {
 	// Fallback to highest priority enabled registry
 	priorities := rm.getSortedRegistriesByPriority()
 	for _, id := range priorities {
-		if config := rm.configs[id]; config.Enabled {
+		if cfg := rm.configs[id]; cfg.Enabled {
 			if provider, exists := rm.providers[id]; exists {
 				return provider
 			}
@@ -460,4 +469,68 @@ func (rm *registryManager) getSortedRegistriesByPriorityUnsafe() []string {
 	})
 
 	return ids
+}
+
+// SaveToConfig persists the current registry configuration to the config file
+func (rm *registryManager) SaveToConfig() error {
+	rm.mu.RLock()
+	configs := make([]RegistryConfig, 0, len(rm.configs))
+	for _, cfg := range rm.configs {
+		configs = append(configs, cfg)
+	}
+	defaultID := rm.defaultID
+	rm.mu.RUnlock()
+
+	// Convert registry.RegistryConfig to config.RegistryConfig
+	configRegistries := make([]config.RegistryConfig, len(configs))
+	for i, regConfig := range configs {
+		configRegistries[i] = config.RegistryConfig{
+			ID:             regConfig.ID,
+			Name:           regConfig.Name,
+			Type:           regConfig.Type,
+			URL:            regConfig.URL,
+			Path:           regConfig.Path,
+			Priority:       regConfig.Priority,
+			AllowPrivateIp: regConfig.AllowPrivateIp,
+			Enabled:        regConfig.Enabled,
+		}
+	}
+
+	// Update the configuration file
+	return config.UpdateConfig(func(cfg *config.Config) {
+		cfg.Registries = configRegistries
+		cfg.DefaultRegistryID = defaultID
+	})
+}
+
+// SaveToConfigPath persists the current registry configuration to a specific config file path
+func (rm *registryManager) SaveToConfigPath(configPath string) error {
+	rm.mu.RLock()
+	configs := make([]RegistryConfig, 0, len(rm.configs))
+	for _, cfg := range rm.configs {
+		configs = append(configs, cfg)
+	}
+	defaultID := rm.defaultID
+	rm.mu.RUnlock()
+
+	// Convert registry.RegistryConfig to config.RegistryConfig
+	configRegistries := make([]config.RegistryConfig, len(configs))
+	for i, regConfig := range configs {
+		configRegistries[i] = config.RegistryConfig{
+			ID:             regConfig.ID,
+			Name:           regConfig.Name,
+			Type:           regConfig.Type,
+			URL:            regConfig.URL,
+			Path:           regConfig.Path,
+			Priority:       regConfig.Priority,
+			AllowPrivateIp: regConfig.AllowPrivateIp,
+			Enabled:        regConfig.Enabled,
+		}
+	}
+
+	// Update the configuration file at specific path
+	return config.UpdateConfigAtPath(configPath, func(cfg *config.Config) {
+		cfg.Registries = configRegistries
+		cfg.DefaultRegistryID = defaultID
+	})
 }
