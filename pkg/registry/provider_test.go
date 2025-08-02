@@ -65,6 +65,27 @@ func TestNewRegistryProvider(t *testing.T) {
 	}
 }
 
+func TestNewRegistryProviderBackwardCompatibility(t *testing.T) {
+	t.Parallel()
+
+	// Test that NewRegistryProvider succeeds even with non-existent local file path
+	// (to maintain backward compatibility - file might be created later)
+	config := &config.Config{
+		LocalRegistryPath: "/non/existent/path/registry.json",
+	}
+
+	provider := NewRegistryProvider(config)
+	if provider == nil {
+		t.Error("NewRegistryProvider() should return a provider even for non-existent file")
+	}
+
+	// However, calling GetRegistry on the provider should fail
+	_, err := provider.GetRegistry()
+	if err == nil {
+		t.Error("GetRegistry() should fail for non-existent local file")
+	}
+}
+
 func TestEmbeddedRegistryProvider(t *testing.T) {
 	t.Parallel()
 	provider := NewEmbeddedRegistryProvider()
@@ -367,5 +388,51 @@ func TestListServers(t *testing.T) {
 
 	if len(servers) != len(reg.Servers) {
 		t.Errorf("Expected %d servers, got %d", len(reg.Servers), len(servers))
+	}
+}
+
+func TestGetDefaultManager(t *testing.T) {
+	t.Parallel()
+	manager, err := GetDefaultManager()
+	if err != nil {
+		t.Fatalf("Failed to get default manager: %v", err)
+	}
+
+	if manager == nil {
+		t.Fatal("Default manager is nil")
+	}
+
+	// Test that we can get registry info
+	infos := manager.ListRegistryInfo()
+	if len(infos) == 0 {
+		t.Error("Default manager should have at least one registry")
+	}
+
+	// Test that we have a default provider
+	provider := manager.GetDefaultRegistry()
+	if provider == nil {
+		t.Error("Default manager should have a default provider")
+	}
+}
+
+func TestGetDefaultProviderFromManager(t *testing.T) {
+	t.Parallel()
+	provider, err := GetDefaultProviderFromManager()
+	if err != nil {
+		t.Fatalf("Failed to get default provider from manager: %v", err)
+	}
+
+	if provider == nil {
+		t.Fatal("Default provider from manager is nil")
+	}
+
+	// Test that it behaves like a normal provider
+	registry, err := provider.GetRegistry()
+	if err != nil {
+		t.Fatalf("Failed to get registry from manager provider: %v", err)
+	}
+
+	if registry == nil {
+		t.Error("Registry from manager provider is nil")
 	}
 }

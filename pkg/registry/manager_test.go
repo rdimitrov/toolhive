@@ -6,7 +6,6 @@ import (
 	"github.com/stacklok/toolhive/pkg/config"
 )
 
-
 func TestNewRegistryManager(t *testing.T) {
 	manager := NewRegistryManager()
 	if manager == nil {

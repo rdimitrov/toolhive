@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/stacklok/toolhive/pkg/config"
@@ -10,6 +11,10 @@ var (
 	defaultProvider     Provider
 	defaultProviderOnce sync.Once
 	defaultProviderErr  error
+
+	defaultManager     RegistryManager
+	defaultManagerOnce sync.Once
+	defaultManagerErr  error
 )
 
 // NewRegistryProvider creates a new registry provider based on the configuration
@@ -39,11 +44,46 @@ func GetDefaultProvider() (Provider, error) {
 }
 
 // NewRegistryManagerFromConfig creates a new registry manager from the configuration
-// This converts the existing single registry configuration to the multi-registry format
+// This loads multi-registry configurations when available, or falls back to legacy single registry
 func NewRegistryManagerFromConfig(cfg *config.Config) RegistryManager {
 	manager := NewRegistryManager()
 
-	// Convert existing configuration to registry config
+	if cfg == nil {
+		// No config, use embedded registry as default
+		registryConfig := RegistryConfig{
+			ID:       "default",
+			Name:     "Default Registry",
+			Type:     RegistryTypeEmbedded,
+			Priority: 1,
+			Enabled:  true,
+		}
+		_ = manager.AddRegistry(registryConfig)
+		return manager
+	}
+
+	// If multi-registry configuration is available, use it
+	if len(cfg.Registries) > 0 {
+		for _, configRegistry := range cfg.Registries {
+			registryConfig := RegistryConfig{
+				ID:             configRegistry.ID,
+				Name:           configRegistry.Name,
+				Type:           configRegistry.Type,
+				URL:            configRegistry.URL,
+				Path:           configRegistry.Path,
+				Priority:       configRegistry.Priority,
+				AllowPrivateIp: configRegistry.AllowPrivateIp,
+				Enabled:        configRegistry.Enabled,
+			}
+			_ = manager.AddRegistry(registryConfig)
+		}
+		// Set default registry if specified
+		if cfg.DefaultRegistryID != "" {
+			_ = manager.SetDefaultRegistry(cfg.DefaultRegistryID)
+		}
+		return manager
+	}
+
+	// Fall back to legacy single registry configuration
 	registryConfig := RegistryConfig{
 		ID:       "default",
 		Name:     "Default Registry",
@@ -51,12 +91,12 @@ func NewRegistryManagerFromConfig(cfg *config.Config) RegistryManager {
 		Enabled:  true,
 	}
 
-	// Determine registry type and configuration
-	if cfg != nil && len(cfg.RegistryUrl) > 0 {
+	// Determine registry type and configuration from legacy fields
+	if len(cfg.RegistryUrl) > 0 {
 		registryConfig.Type = RegistryTypeRemote
 		registryConfig.URL = cfg.RegistryUrl
 		registryConfig.AllowPrivateIp = cfg.AllowPrivateRegistryIp
-	} else if cfg != nil && len(cfg.LocalRegistryPath) > 0 {
+	} else if len(cfg.LocalRegistryPath) > 0 {
 		registryConfig.Type = RegistryTypeLocal
 		registryConfig.Path = cfg.LocalRegistryPath
 	} else {
@@ -71,4 +111,35 @@ func NewRegistryManagerFromConfig(cfg *config.Config) RegistryManager {
 	}
 
 	return manager
+}
+
+// GetDefaultManager returns the default registry manager instance
+// This is the recommended approach for new code that needs multi-registry support
+func GetDefaultManager() (RegistryManager, error) {
+	defaultManagerOnce.Do(func() {
+		cfg, err := config.LoadOrCreateConfig()
+		if err != nil {
+			defaultManagerErr = err
+			return
+		}
+		defaultManager = NewRegistryManagerFromConfig(cfg)
+	})
+
+	return defaultManager, defaultManagerErr
+}
+
+// GetDefaultProviderFromManager returns the default provider using the manager approach
+// This bridges the old Provider interface with the new Manager architecture
+func GetDefaultProviderFromManager() (Provider, error) {
+	manager, err := GetDefaultManager()
+	if err != nil {
+		return nil, err
+	}
+
+	provider := manager.GetDefaultRegistry()
+	if provider == nil {
+		return nil, fmt.Errorf("no default registry available")
+	}
+
+	return provider, nil
 }
