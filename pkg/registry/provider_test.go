@@ -18,14 +18,14 @@ func TestNewRegistryProvider(t *testing.T) {
 		{
 			name:         "nil config returns embedded provider",
 			config:       nil,
-			expectedType: "*registry.LocalRegistryProvider",
+			expectedType: "*registry.EmbeddedRegistryProvider",
 		},
 		{
 			name: "empty registry URL returns embedded provider",
 			config: &config.Config{
 				RegistryUrl: "",
 			},
-			expectedType: "*registry.LocalRegistryProvider",
+			expectedType: "*registry.EmbeddedRegistryProvider",
 		},
 		{
 			name: "registry URL returns remote provider",
@@ -35,7 +35,7 @@ func TestNewRegistryProvider(t *testing.T) {
 			expectedType: "*registry.RemoteRegistryProvider",
 		},
 		{
-			name: "local registry path returns embedded provider with file path",
+			name: "local registry path returns local provider with file path",
 			config: &config.Config{
 				LocalRegistryPath: "/path/to/registry.json",
 			},
@@ -65,9 +65,9 @@ func TestNewRegistryProvider(t *testing.T) {
 	}
 }
 
-func TestLocalRegistryProvider(t *testing.T) {
+func TestEmbeddedRegistryProvider(t *testing.T) {
 	t.Parallel()
-	provider := NewLocalRegistryProvider()
+	provider := NewEmbeddedRegistryProvider()
 
 	// Test GetRegistry
 	registry, err := provider.GetRegistry()
@@ -118,6 +118,47 @@ func TestLocalRegistryProvider(t *testing.T) {
 	_, err = provider.GetServer("non-existing-server")
 	if err == nil {
 		t.Error("GetServer() with non-existing server should return error")
+	}
+
+	// Test that multiple calls to GetRegistry return the same instance
+	// This tests that the registry is cached and not reloaded
+	registry2, err := provider.GetRegistry()
+	if err != nil {
+		t.Fatalf("Second GetRegistry() call failed: %v", err)
+	}
+
+	// The registry should be the same instance (cached)
+	if registry != registry2 {
+		t.Error("GetRegistry() should return the same cached instance on multiple calls")
+	}
+}
+
+func TestEmbeddedRegistryProviderErrorHandling(t *testing.T) {
+	t.Parallel()
+
+	// Create a provider with nil registry to simulate initialization failure
+	provider := &EmbeddedRegistryProvider{registry: nil}
+
+	// Test that GetRegistry returns an error when registry failed to load
+	_, err := provider.GetRegistry()
+	if err == nil {
+		t.Error("GetRegistry() should return error when registry failed to load during initialization")
+	}
+
+	// Test that other methods also handle the error gracefully
+	_, err = provider.GetServer("test")
+	if err == nil {
+		t.Error("GetServer() should return error when registry failed to load")
+	}
+
+	_, err = provider.SearchServers("test")
+	if err == nil {
+		t.Error("SearchServers() should return error when registry failed to load")
+	}
+
+	_, err = provider.ListServers()
+	if err == nil {
+		t.Error("ListServers() should return error when registry failed to load")
 	}
 }
 
@@ -208,6 +249,8 @@ func getTypeName(v interface{}) string {
 		return "*registry.LocalRegistryProvider"
 	case *RemoteRegistryProvider:
 		return "*registry.RemoteRegistryProvider"
+	case *EmbeddedRegistryProvider:
+		return "*registry.EmbeddedRegistryProvider"
 	default:
 		return "unknown"
 	}
