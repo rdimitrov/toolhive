@@ -1,47 +1,16 @@
 package registry
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/stacklok/toolhive/pkg/config"
 )
 
 var (
-	defaultProvider     Provider
-	defaultProviderOnce sync.Once
-	defaultProviderErr  error
-
 	defaultManager     RegistryManager
 	defaultManagerOnce sync.Once
 	defaultManagerErr  error
 )
-
-// NewRegistryProvider creates a new registry provider based on the configuration
-func NewRegistryProvider(cfg *config.Config) Provider {
-	if cfg != nil && len(cfg.RegistryUrl) > 0 {
-		return NewRemoteRegistryProvider(cfg.RegistryUrl, cfg.AllowPrivateRegistryIp)
-	}
-	if cfg != nil && len(cfg.LocalRegistryPath) > 0 {
-		return NewLocalRegistryProvider(cfg.LocalRegistryPath)
-	}
-	return NewEmbeddedRegistryProvider()
-}
-
-// GetDefaultProvider returns the default registry provider instance
-// This maintains backward compatibility with the existing singleton pattern
-func GetDefaultProvider() (Provider, error) {
-	defaultProviderOnce.Do(func() {
-		cfg, err := config.LoadOrCreateConfig()
-		if err != nil {
-			defaultProviderErr = err
-			return
-		}
-		defaultProvider = NewRegistryProvider(cfg)
-	})
-
-	return defaultProvider, defaultProviderErr
-}
 
 // NewRegistryManagerFromConfig creates a new registry manager from the configuration
 // This loads multi-registry configurations when available, or falls back to legacy single registry
@@ -113,8 +82,7 @@ func NewRegistryManagerFromConfig(cfg *config.Config) RegistryManager {
 	return manager
 }
 
-// GetDefaultManager returns the default registry manager instance
-// This is the recommended approach for new code that needs multi-registry support
+// GetDefaultManager returns the default multi-registry manager instance
 func GetDefaultManager() (RegistryManager, error) {
 	defaultManagerOnce.Do(func() {
 		cfg, err := config.LoadOrCreateConfig()
@@ -126,20 +94,4 @@ func GetDefaultManager() (RegistryManager, error) {
 	})
 
 	return defaultManager, defaultManagerErr
-}
-
-// GetDefaultProviderFromManager returns the default provider using the manager approach
-// This bridges the old Provider interface with the new Manager architecture
-func GetDefaultProviderFromManager() (Provider, error) {
-	manager, err := GetDefaultManager()
-	if err != nil {
-		return nil, err
-	}
-
-	provider := manager.GetDefaultRegistry()
-	if provider == nil {
-		return nil, fmt.Errorf("no default registry available")
-	}
-
-	return provider, nil
 }
