@@ -191,6 +191,11 @@ func detectRegistryType(input string) (registryType string, cleanPath string) {
 }
 
 func setRegistryCmdFunc(_ *cobra.Command, args []string) error {
+	// Show deprecation warning
+	fmt.Printf("⚠️  DEPRECATION WARNING: 'thv config set-registry' is deprecated.\n")
+	fmt.Printf("   Please use 'thv registry add <id> <url-or-path>' instead for better multi-registry support.\n")
+	fmt.Printf("   Migration example: thv registry add default %s\n\n", args[0])
+
 	input := args[0]
 	registryType, cleanPath := detectRegistryType(input)
 
@@ -282,6 +287,10 @@ func setRegistryFile(registryPath string) error {
 }
 
 func getRegistryCmdFunc(_ *cobra.Command, _ []string) error {
+	// Show deprecation warning
+	fmt.Printf("⚠️  DEPRECATION WARNING: 'thv config get-registry' is deprecated.\n")
+	fmt.Printf("   Please use 'thv registry sources' instead to see all configured registries.\n\n")
+
 	cfg := config.GetConfig()
 
 	if cfg.RegistryUrl != "" {
@@ -304,6 +313,10 @@ func getRegistryCmdFunc(_ *cobra.Command, _ []string) error {
 }
 
 func unsetRegistryCmdFunc(_ *cobra.Command, _ []string) error {
+	// Show deprecation warning
+	fmt.Printf("⚠️  DEPRECATION WARNING: 'thv config unset-registry' is deprecated.\n")
+	fmt.Printf("   Please use 'thv registry remove <id>' instead for better multi-registry support.\n\n")
+
 	cfg := config.GetConfig()
 
 	if cfg.RegistryUrl == "" && cfg.LocalRegistryPath == "" {
