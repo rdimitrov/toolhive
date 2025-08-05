@@ -21,16 +21,32 @@ import (
 // lockTimeout is the maximum time to wait for a file lock
 const lockTimeout = 1 * time.Second
 
+// RegistryConfig represents the configuration for a registry
+type RegistryConfig struct {
+	ID             string `json:"id" yaml:"id"`
+	Name           string `json:"name" yaml:"name"`
+	Type           string `json:"type" yaml:"type"` // "remote", "local", "embedded"
+	URL            string `json:"url,omitempty" yaml:"url,omitempty"`
+	Path           string `json:"path,omitempty" yaml:"path,omitempty"`
+	Priority       int    `json:"priority" yaml:"priority"`
+	AllowPrivateIp bool   `json:"allow_private_ip" yaml:"allow_private_ip"`
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+}
+
 // Config represents the configuration of the application.
 type Config struct {
-	Secrets                Secrets             `yaml:"secrets"`
-	Clients                Clients             `yaml:"clients"`
-	RegistryUrl            string              `yaml:"registry_url"`
-	LocalRegistryPath      string              `yaml:"local_registry_path"`
-	AllowPrivateRegistryIp bool                `yaml:"allow_private_registry_ip"`
-	CACertificatePath      string              `yaml:"ca_certificate_path,omitempty"`
-	OTEL                   OpenTelemetryConfig `yaml:"otel,omitempty"`
-	DefaultGroupMigration  bool                `yaml:"default_group_migration,omitempty"`
+	Secrets Secrets `yaml:"secrets"`
+	Clients Clients `yaml:"clients"`
+	// Legacy registry fields (maintained for backward compatibility)
+	RegistryUrl            string `yaml:"registry_url"`
+	LocalRegistryPath      string `yaml:"local_registry_path"`
+	AllowPrivateRegistryIp bool   `yaml:"allow_private_registry_ip"`
+	// New multi-registry configuration
+	Registries            []RegistryConfig    `yaml:"registries,omitempty"`
+	DefaultRegistryID     string              `yaml:"default_registry_id,omitempty"`
+	CACertificatePath     string              `yaml:"ca_certificate_path,omitempty"`
+	OTEL                  OpenTelemetryConfig `yaml:"otel,omitempty"`
+	DefaultGroupMigration bool                `yaml:"default_group_migration,omitempty"`
 }
 
 // Secrets contains the settings for secrets management.
