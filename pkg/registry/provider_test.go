@@ -4,70 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/stacklok/toolhive/pkg/config"
 )
 
-func TestNewRegistryProvider(t *testing.T) {
+func TestEmbeddedRegistryProvider(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name         string
-		config       *config.Config
-		expectedType string
-	}{
-		{
-			name:         "nil config returns embedded provider",
-			config:       nil,
-			expectedType: "*registry.LocalRegistryProvider",
-		},
-		{
-			name: "empty registry URL returns embedded provider",
-			config: &config.Config{
-				RegistryUrl: "",
-			},
-			expectedType: "*registry.LocalRegistryProvider",
-		},
-		{
-			name: "registry URL returns remote provider",
-			config: &config.Config{
-				RegistryUrl: "https://example.com/registry.json",
-			},
-			expectedType: "*registry.RemoteRegistryProvider",
-		},
-		{
-			name: "local registry path returns embedded provider with file path",
-			config: &config.Config{
-				LocalRegistryPath: "/path/to/registry.json",
-			},
-			expectedType: "*registry.LocalRegistryProvider",
-		},
-		{
-			name: "registry URL takes precedence over local path",
-			config: &config.Config{
-				RegistryUrl:       "https://example.com/registry.json",
-				LocalRegistryPath: "/path/to/registry.json",
-			},
-			expectedType: "*registry.RemoteRegistryProvider",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			provider := NewRegistryProvider(tt.config)
-
-			// Check the type of the provider
-			providerType := getTypeName(provider)
-			if providerType != tt.expectedType {
-				t.Errorf("NewRegistryProvider() = %v, want %v", providerType, tt.expectedType)
-			}
-		})
-	}
-}
-
-func TestLocalRegistryProvider(t *testing.T) {
-	t.Parallel()
-	provider := NewLocalRegistryProvider()
+	provider := NewEmbeddedRegistryProvider()
 
 	// Test GetRegistry
 	registry, err := provider.GetRegistry()
@@ -118,6 +59,47 @@ func TestLocalRegistryProvider(t *testing.T) {
 	_, err = provider.GetServer("non-existing-server")
 	if err == nil {
 		t.Error("GetServer() with non-existing server should return error")
+	}
+
+	// Test that multiple calls to GetRegistry return the same instance
+	// This tests that the registry is cached and not reloaded
+	registry2, err := provider.GetRegistry()
+	if err != nil {
+		t.Fatalf("Second GetRegistry() call failed: %v", err)
+	}
+
+	// The registry should be the same instance (cached)
+	if registry != registry2 {
+		t.Error("GetRegistry() should return the same cached instance on multiple calls")
+	}
+}
+
+func TestEmbeddedRegistryProviderErrorHandling(t *testing.T) {
+	t.Parallel()
+
+	// Create a provider with nil registry to simulate initialization failure
+	provider := &EmbeddedRegistryProvider{registry: nil}
+
+	// Test that GetRegistry returns an error when registry failed to load
+	_, err := provider.GetRegistry()
+	if err == nil {
+		t.Error("GetRegistry() should return error when registry failed to load during initialization")
+	}
+
+	// Test that other methods also handle the error gracefully
+	_, err = provider.GetServer("test")
+	if err == nil {
+		t.Error("GetServer() should return error when registry failed to load")
+	}
+
+	_, err = provider.SearchServers("test")
+	if err == nil {
+		t.Error("SearchServers() should return error when registry failed to load")
+	}
+
+	_, err = provider.ListServers()
+	if err == nil {
+		t.Error("ListServers() should return error when registry failed to load")
 	}
 }
 
@@ -208,16 +190,22 @@ func getTypeName(v interface{}) string {
 		return "*registry.LocalRegistryProvider"
 	case *RemoteRegistryProvider:
 		return "*registry.RemoteRegistryProvider"
+	case *EmbeddedRegistryProvider:
+		return "*registry.EmbeddedRegistryProvider"
 	default:
 		return "unknown"
 	}
 }
 
-func TestGetRegistry(t *testing.T) {
+func TestProviderGetRegistry(t *testing.T) {
 	t.Parallel()
-	provider, err := GetDefaultProvider()
+	manager, err := GetDefaultManager()
 	if err != nil {
-		t.Fatalf("Failed to get registry provider: %v", err)
+		t.Fatalf("Failed to get registry manager: %v", err)
+	}
+	provider := manager.GetDefaultRegistry()
+	if provider == nil {
+		t.Fatal("No default registry provider available")
 	}
 	reg, err := provider.GetRegistry()
 	if err != nil {
@@ -244,12 +232,12 @@ func TestGetRegistry(t *testing.T) {
 
 func TestGetServer(t *testing.T) {
 	t.Parallel()
-	// Test getting an existing server
-	provider, err := GetDefaultProvider()
+	// Test getting an existing server using RegistryManager
+	manager, err := GetDefaultManager()
 	if err != nil {
-		t.Fatalf("Failed to get registry provider: %v", err)
+		t.Fatalf("Failed to get registry manager: %v", err)
 	}
-	server, err := provider.GetServer("osv")
+	server, err := manager.GetServer("osv")
 	if err != nil {
 		t.Fatalf("Failed to get server: %v", err)
 	}
@@ -268,7 +256,7 @@ func TestGetServer(t *testing.T) {
 	}
 
 	// Test getting a non-existent server
-	_, err = provider.GetServer("non-existent-server")
+	_, err = manager.GetServer("non-existent-server")
 	if err == nil {
 		t.Error("Expected error when getting non-existent server")
 	}
@@ -276,12 +264,12 @@ func TestGetServer(t *testing.T) {
 
 func TestSearchServers(t *testing.T) {
 	t.Parallel()
-	// Test searching for servers
-	provider, err := GetDefaultProvider()
+	// Test searching for servers using RegistryManager
+	manager, err := GetDefaultManager()
 	if err != nil {
-		t.Fatalf("Failed to get registry provider: %v", err)
+		t.Fatalf("Failed to get registry manager: %v", err)
 	}
-	servers, err := provider.SearchServers("search")
+	servers, err := manager.SearchServers("search")
 	if err != nil {
 		t.Fatalf("Failed to search servers: %v", err)
 	}
@@ -291,7 +279,7 @@ func TestSearchServers(t *testing.T) {
 	}
 
 	// Test searching for non-existent servers
-	servers, err = provider.SearchServers("non-existent-server")
+	servers, err = manager.SearchServers("non-existent-server")
 	if err != nil {
 		t.Fatalf("Failed to search servers: %v", err)
 	}
@@ -303,11 +291,11 @@ func TestSearchServers(t *testing.T) {
 
 func TestListServers(t *testing.T) {
 	t.Parallel()
-	provider, err := GetDefaultProvider()
+	manager, err := GetDefaultManager()
 	if err != nil {
-		t.Fatalf("Failed to get registry provider: %v", err)
+		t.Fatalf("Failed to get registry manager: %v", err)
 	}
-	servers, err := provider.ListServers()
+	servers, err := manager.ListServers()
 	if err != nil {
 		t.Fatalf("Failed to list servers: %v", err)
 	}
@@ -316,13 +304,39 @@ func TestListServers(t *testing.T) {
 		t.Error("No servers found")
 	}
 
-	// Verify that we get the same number of servers as in the registry
-	reg, err := provider.GetRegistry()
-	if err != nil {
-		t.Fatalf("Failed to get registry: %v", err)
+	// Verify that we get servers from the aggregated registries
+	infos := manager.ListRegistryInfo()
+	if len(infos) == 0 {
+		t.Error("Manager should have at least one registry")
 	}
 
-	if len(servers) != len(reg.Servers) {
-		t.Errorf("Expected %d servers, got %d", len(reg.Servers), len(servers))
+	// Verify we have some servers available
+	if len(servers) == 0 {
+		t.Error("Manager should return some servers from its registries")
 	}
 }
+
+func TestGetDefaultManager(t *testing.T) {
+	t.Parallel()
+	manager, err := GetDefaultManager()
+	if err != nil {
+		t.Fatalf("Failed to get default manager: %v", err)
+	}
+
+	if manager == nil {
+		t.Fatal("Default manager is nil")
+	}
+
+	// Test that we can get registry info
+	infos := manager.ListRegistryInfo()
+	if len(infos) == 0 {
+		t.Error("Default manager should have at least one registry")
+	}
+
+	// Test that we have a default provider
+	provider := manager.GetDefaultRegistry()
+	if provider == nil {
+		t.Error("Default manager should have a default provider")
+	}
+}
+
