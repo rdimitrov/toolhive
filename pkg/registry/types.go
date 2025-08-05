@@ -108,3 +108,32 @@ type Metadata struct {
 func (m *Metadata) ParsedTime() (time.Time, error) {
 	return time.Parse(time.RFC3339, m.LastUpdated)
 }
+
+// RegistryConfig represents the configuration for a registry
+type RegistryConfig struct {
+	ID             string `json:"id" yaml:"id"`
+	Name           string `json:"name" yaml:"name"`
+	Type           string `json:"type" yaml:"type"` // "remote", "local", "embedded"
+	URL            string `json:"url,omitempty" yaml:"url,omitempty"`
+	Path           string `json:"path,omitempty" yaml:"path,omitempty"`
+	Priority       int    `json:"priority" yaml:"priority"`
+	AllowPrivateIp bool   `json:"allow_private_ip" yaml:"allow_private_ip"`
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+}
+
+// RegistryInfo represents detailed information about a registry including its status
+type RegistryInfo struct {
+	RegistryConfig
+	Status       string    `json:"status"` // "online", "offline", "error"
+	LastChecked  time.Time `json:"last_checked"`
+	ServerCount  int       `json:"server_count"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+}
+
+// ServerWithSource represents a server with information about which registry it came from
+type ServerWithSource struct {
+	*ImageMetadata
+	RegistryID   string `json:"registry_id"`
+	RegistryName string `json:"registry_name"`
+	Priority     int    `json:"priority"`
+}
