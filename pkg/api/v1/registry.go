@@ -2,6 +2,7 @@ package v1
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,19 +11,14 @@ import (
 	"github.com/stacklok/toolhive/pkg/registry"
 )
 
-const (
-	// defaultRegistryName is the name of the default registry
-	defaultRegistryName = "default"
-)
-
 // RegistryRoutes defines the routes for the registry API.
 type RegistryRoutes struct {
-	provider registry.Provider
+	manager registry.RegistryManager
 }
 
 // RegistryRouter creates a new router for the registry API.
-func RegistryRouter(provider registry.Provider) http.Handler {
-	routes := RegistryRoutes{provider: provider}
+func RegistryRouter(manager registry.RegistryManager) http.Handler {
+	routes := RegistryRoutes{manager: manager}
 
 	r := chi.NewRouter()
 	r.Get("/", routes.listRegistries)
@@ -47,19 +43,16 @@ func RegistryRouter(provider registry.Provider) http.Handler {
 //		@Success		200	{object}	registryListResponse
 //		@Router			/api/v1beta/registry [get]
 func (routes *RegistryRoutes) listRegistries(w http.ResponseWriter, _ *http.Request) {
-	reg, err := routes.provider.GetRegistry()
-	if err != nil {
-		http.Error(w, "Failed to get registry", http.StatusInternalServerError)
-		return
-	}
+	registryInfos := routes.manager.ListRegistryInfo()
 
-	registries := []registryInfo{
-		{
-			Name:        defaultRegistryName,
-			Version:     reg.Version,
-			LastUpdated: reg.LastUpdated,
-			ServerCount: len(reg.Servers),
-		},
+	registries := make([]registryInfo, 0, len(registryInfos))
+	for _, info := range registryInfos {
+		registries = append(registries, registryInfo{
+			Name:        info.ID,
+			Version:     "1.0", // This could be extracted from registry data if needed
+			LastUpdated: info.LastChecked.Format("2006-01-02T15:04:05Z"),
+			ServerCount: info.ServerCount,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -77,12 +70,82 @@ func (routes *RegistryRoutes) listRegistries(w http.ResponseWriter, _ *http.Requ
 //		@Tags			registry
 //		@Accept			json
 //		@Produce		json
-//		@Success		501		{string}	string	"Not Implemented"
+//		@Param			body	body		addRegistryRequest	true	"Registry configuration"
+//		@Success		201		{object}	registryInfo
+//		@Failure		400		{string}	string	"Bad Request"
+//		@Failure		409		{string}	string	"Conflict - Registry already exists"
 //		@Router			/api/v1beta/registry [post]
-func (*RegistryRoutes) addRegistry(w http.ResponseWriter, _ *http.Request) {
-	// Currently, only the default registry is supported
-	// This endpoint returns a 501 Not Implemented status
-	http.Error(w, "Adding custom registries is not currently supported", http.StatusNotImplemented)
+func (routes *RegistryRoutes) addRegistry(w http.ResponseWriter, r *http.Request) {
+	var req addRegistryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.ID == "" {
+		http.Error(w, "Registry ID is required", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, "Registry name is required", http.StatusBadRequest)
+		return
+	}
+	if req.Type == "" {
+		http.Error(w, "Registry type is required", http.StatusBadRequest)
+		return
+	}
+
+	// Create registry configuration
+	config := registry.RegistryConfig{
+		ID:             req.ID,
+		Name:           req.Name,
+		Type:           req.Type,
+		URL:            req.URL,
+		Path:           req.Path,
+		Priority:       req.Priority,
+		AllowPrivateIp: req.AllowPrivateIp,
+		Enabled:        true, // New registries are enabled by default
+	}
+
+	// Add the registry
+	if err := routes.manager.AddRegistry(config); err != nil {
+		if err.Error() == fmt.Sprintf("registry with ID %s already exists", req.ID) {
+			http.Error(w, err.Error(), http.StatusConflict)
+		} else {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+		return
+	}
+
+	// Store the configuration changes to disk
+	if err := routes.manager.SaveToConfig(); err != nil {
+		// Log the error but don't fail the request since the registry was added successfully
+		logger.Errorf("Failed to save registry configuration to disk: %v", err)
+	}
+
+	// Return the created registry info
+	registryInfos := routes.manager.ListRegistryInfo()
+	for _, info := range registryInfos {
+		if info.ID == req.ID {
+			response := registryInfo{
+				Name:        info.ID,
+				Version:     "1.0",
+				LastUpdated: info.LastChecked.Format("2006-01-02T15:04:05Z"),
+				ServerCount: info.ServerCount,
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+				return
+			}
+			return
+		}
+	}
+
+	http.Error(w, "Failed to retrieve created registry", http.StatusInternalServerError)
 }
 
 //	 getRegistry
@@ -91,27 +154,44 @@ func (*RegistryRoutes) addRegistry(w http.ResponseWriter, _ *http.Request) {
 //		@Description	Get details of a specific registry
 //		@Tags			registry
 //		@Produce		json
-//		@Param			name	path		string	true	"Registry name"
+//		@Param			name	path		string	true	"Registry name/ID"
 //		@Success		200	{object}	getRegistryResponse
 //		@Failure		404	{string}	string	"Not Found"
 //		@Router			/api/v1beta/registry/{name} [get]
 func (routes *RegistryRoutes) getRegistry(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	// Only "default" registry is supported currently
-	if name != defaultRegistryName {
+	// Get the specific registry provider
+	provider, err := routes.manager.GetRegistry(name)
+	if err != nil {
 		http.Error(w, "Registry not found", http.StatusNotFound)
 		return
 	}
 
-	reg, err := routes.provider.GetRegistry()
+	// Get the registry data
+	reg, err := provider.GetRegistry()
 	if err != nil {
-		http.Error(w, "Failed to get registry", http.StatusInternalServerError)
+		http.Error(w, "Failed to get registry data", http.StatusInternalServerError)
+		return
+	}
+
+	// Get registry info for metadata
+	registryInfos := routes.manager.ListRegistryInfo()
+	var registryInfo *registry.RegistryInfo
+	for _, info := range registryInfos {
+		if info.ID == name {
+			registryInfo = &info
+			break
+		}
+	}
+
+	if registryInfo == nil {
+		http.Error(w, "Registry metadata not found", http.StatusInternalServerError)
 		return
 	}
 
 	response := getRegistryResponse{
-		Name:        defaultRegistryName,
+		Name:        registryInfo.ID,
 		Version:     reg.Version,
 		LastUpdated: reg.LastUpdated,
 		ServerCount: len(reg.Servers),
@@ -132,21 +212,32 @@ func (routes *RegistryRoutes) getRegistry(w http.ResponseWriter, r *http.Request
 //		@Description	Remove a specific registry
 //		@Tags			registry
 //		@Produce		json
-//		@Param			name	path		string	true	"Registry name"
+//		@Param			name	path		string	true	"Registry name/ID"
 //		@Success		204	{string}	string	"No Content"
+//		@Failure		400	{string}	string	"Bad Request"
 //		@Failure		404	{string}	string	"Not Found"
 //		@Router			/api/v1beta/registry/{name} [delete]
-func (*RegistryRoutes) removeRegistry(w http.ResponseWriter, r *http.Request) {
+func (routes *RegistryRoutes) removeRegistry(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	// Cannot remove the default registry
-	if name == defaultRegistryName {
-		http.Error(w, "Cannot remove the default registry", http.StatusBadRequest)
+	// Attempt to remove the registry
+	if err := routes.manager.RemoveRegistry(name); err != nil {
+		if err.Error() == fmt.Sprintf("registry not found: %s", name) {
+			http.Error(w, "Registry not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 		return
 	}
 
-	// Since only default registry exists, any other name is not found
-	http.Error(w, "Registry not found", http.StatusNotFound)
+	// Store the configuration changes to disk
+	if err := routes.manager.SaveToConfig(); err != nil {
+		// Log the error but don't fail the request since the registry was removed successfully
+		logger.Errorf("Failed to save registry configuration to disk: %v", err)
+	}
+
+	// Successfully removed
+	w.WriteHeader(http.StatusNoContent)
 }
 
 //	 listServers
@@ -155,20 +246,21 @@ func (*RegistryRoutes) removeRegistry(w http.ResponseWriter, r *http.Request) {
 //		@Description	Get a list of servers in a specific registry
 //		@Tags			registry
 //		@Produce		json
-//		@Param			name	path		string	true	"Registry name"
+//		@Param			name	path		string	true	"Registry name/ID"
 //		@Success		200	{object}	listServersResponse
 //		@Failure		404	{string}	string	"Not Found"
 //		@Router			/api/v1beta/registry/{name}/servers [get]
 func (routes *RegistryRoutes) listServers(w http.ResponseWriter, r *http.Request) {
 	registryName := chi.URLParam(r, "name")
 
-	// Only "default" registry is supported currently
-	if registryName != defaultRegistryName {
+	// Get the specific registry provider
+	provider, err := routes.manager.GetRegistry(registryName)
+	if err != nil {
 		http.Error(w, "Registry not found", http.StatusNotFound)
 		return
 	}
 
-	servers, err := routes.provider.ListServers()
+	servers, err := provider.ListServers()
 	if err != nil {
 		logger.Errorf("Failed to list servers: %v", err)
 		http.Error(w, "Failed to list servers", http.StatusInternalServerError)
@@ -190,8 +282,8 @@ func (routes *RegistryRoutes) listServers(w http.ResponseWriter, r *http.Request
 //		@Description	Get details of a specific server in a registry
 //		@Tags			registry
 //		@Produce		json
-//		@Param			name		path		string	true	"Registry name"
-//		@Param			serverName	path		string	true	"ImageMetadata name"
+//		@Param			name		path		string	true	"Registry name/ID"
+//		@Param			serverName	path		string	true	"Server name"
 //		@Success		200	{object}	getServerResponse
 //		@Failure		404	{string}	string	"Not Found"
 //		@Router			/api/v1beta/registry/{name}/servers/{serverName} [get]
@@ -199,16 +291,17 @@ func (routes *RegistryRoutes) getServer(w http.ResponseWriter, r *http.Request) 
 	registryName := chi.URLParam(r, "name")
 	serverName := chi.URLParam(r, "serverName")
 
-	// Only "default" registry is supported currently
-	if registryName != defaultRegistryName {
+	// Get the specific registry provider
+	provider, err := routes.manager.GetRegistry(registryName)
+	if err != nil {
 		http.Error(w, "Registry not found", http.StatusNotFound)
 		return
 	}
 
-	server, err := routes.provider.GetServer(serverName)
+	server, err := provider.GetServer(serverName)
 	if err != nil {
 		logger.Errorf("Failed to get server '%s': %v", serverName, err)
-		http.Error(w, "ImageMetadata not found", http.StatusNotFound)
+		http.Error(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
@@ -275,4 +368,24 @@ type listServersResponse struct {
 type getServerResponse struct {
 	// Server details
 	Server *registry.ImageMetadata `json:"server"`
+}
+
+// addRegistryRequest represents the request for adding a new registry
+//
+//	@Description	Request to add a new registry
+type addRegistryRequest struct {
+	// Unique identifier for the registry
+	ID string `json:"id"`
+	// Display name for the registry
+	Name string `json:"name"`
+	// Type of registry (remote, local, embedded)
+	Type string `json:"type"`
+	// URL for remote registries
+	URL string `json:"url,omitempty"`
+	// File path for local registries
+	Path string `json:"path,omitempty"`
+	// Priority for registry resolution (lower number = higher priority)
+	Priority int `json:"priority"`
+	// Whether to allow private IP addresses for remote registries
+	AllowPrivateIp bool `json:"allow_private_ip"`
 }
